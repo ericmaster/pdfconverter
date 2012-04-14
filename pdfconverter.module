@@ -1,0 +1,248 @@
+<?php
+require_once("pdfconverter.services.inc");
+
+/**
+ * Implements hook_permission
+ */
+function pdfconverter_permission(){
+  return array();
+}
+
+/**
+ * Implements hook_menu();
+ */
+function pdfconverter_menu(){
+  $items['manual-convert'] = array(
+    'title' => 'Convert PDF to Images', 
+    'page callback' => 'drupal_get_form', 
+    'page arguments' => array('_pdfconverter_convert_form'),
+    'access arguments' => array('access content'), 
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_form_alter()
+ */
+function pdfconverter_form_alter(&$form, &$form_state, $form_id){
+  if($form_id == 'field_ui_field_edit_form'){
+    if($form['#field']['type'] == 'file'){
+      $pdfconverter_enabled = variable_get('pdfconverter_'.$form['#instance']['field_name'].'_'.$form['#instance']['entity_type'].'_'.$form['#instance']['bundle'], 0);
+      $form['instance']['settings']['pdfconverter'] = array(
+        '#type' => 'checkbox',
+        '#title' => 'Enable PDF to image conversion',
+        '#weight' => -3,
+        '#default_value' => $pdfconverter_enabled 
+      );
+      $form['instance']['settings']['pdfconverter_fieldable'] = array(
+        '#type' => 'checkbox',
+        '#title' => 'Store images within an existing image field',
+        '#weight' => -2,
+        '#default_value' => variable_get('pdfconverter_fieldable_'.$form['#instance']['field_name'].'_'.$form['#instance']['entity_type'].'_'.$form['#instance']['bundle'], 1)
+      );
+      $field_options = array('' => ' - Select a Field - '); 
+      $fields_info = field_info_fields();
+      foreach($fields_info as $field_name => $field_info){
+        $entity_type = $form['#instance']['entity_type'];
+        if(isset($field_info['bundles'][$entity_type]) && is_array($field_info['bundles'][$entity_type]) && in_array($form['#instance']['bundle'], $field_info['bundles'][$entity_type])){
+          if($field_info['type'] == 'image'){
+            $instance_info = field_info_instance($entity_type, $field_name, $form['#instance']['bundle']);
+            //dpm($instance_info);
+            $field_options[$field_name] = $instance_info['label'];
+          } 
+        }
+      }
+      $form['instance']['settings']['pdfconverter_image_field'] = array(
+        '#type' => 'select',
+        '#title' => 'Select the field where to store the images',
+        '#weight' => -1,
+        '#options' => $field_options,
+        '#default_value' => variable_get('pdfconverter_img_field_'.$form['#instance']['field_name'].'_'.$form['#instance']['entity_type'].'_'.$form['#instance']['bundle'], '')
+      );
+      /*if($pdfconverter_enabled){
+        $form['instance']['settings']['file_extensions']['#attributes']['disabled'] = array('disabled');
+      }*/
+      array_unshift($form['#submit'], '_pdfconverter_file_field_form_submit');
+    }
+  }
+}
+
+/**
+ * Submit handler to set the pdf to image conversion options
+ */
+function _pdfconverter_file_field_form_submit($form, &$form_state){
+  variable_set('pdfconverter_'.$form['#instance']['field_name'].'_'.$form['#instance']['entity_type'].'_'.$form['#instance']['bundle'], $form_state['values']['instance']['settings']['pdfconverter']);
+  if($form_state['values']['instance']['settings']['pdfconverter']){
+    $form_state['values']['instance']['settings']['file_extensions'] = 'pdf';
+    variable_set('pdfconverter_fieldable_'.$form['#instance']['field_name'].'_'.$form['#instance']['entity_type'].'_'.$form['#instance']['bundle'], $form_state['values']['instance']['settings']['pdfconverter_fieldable']);
+    variable_set('pdfconverter_img_field_'.$form['#instance']['field_name'].'_'.$form['#instance']['entity_type'].'_'.$form['#instance']['bundle'], $form_state['values']['instance']['settings']['pdfconverter_image_field']);
+  }
+}
+
+/**
+ * Implements hook_entity_insert
+ */
+function pdfconverter_entity_insert($entity, $type){
+  _pdfconverter_entity_upsert($entity, $type);
+}
+
+/**
+ * Implements hook_entity_update
+ */
+function pdfconverter_entity_update($entity, $type){
+  _pdfconverter_entity_upsert($entity, $type);
+}
+
+function _pdfconverter_entity_upsert($entity, $type){
+  global $user;
+  $fields_info = field_info_fields();
+  foreach($fields_info as $field_name => $field_info){
+    if(isset($field_info['bundles'][$type]) && is_array($field_info['bundles'][$type]) && in_array($entity->type, $field_info['bundles'][$type])){
+      $pdfconverter_enabled = variable_get('pdfconverter_'.$field_name.'_'.$type.'_'.$entity->type, 0);
+      if($pdfconverter_enabled){
+        foreach($entity->$field_name as $lang => $fields){
+          foreach($fields as $id => $field){
+            //load the file entity
+            $original_field = $entity->original->$field_name;
+            if(isset($field['fid']) && $field['fid'] != $original_field[$lang][$id]['fid']){
+              $pdf_file = file_load($field['fid']);
+              if($pdf_file){
+                //check if files has been processed for the file
+                $processed = variable_get('pdfconverter_processed_'.$field_name.'_'.$type.'_'.$entity->type, FALSE);
+                if(!$processed){
+                  $files_sources = convert_file_to_images($pdf_file);
+                  //dpm($files_sources);
+                  $is_fieldable = variable_get('pdfconverter_fieldable_'.$field_name.'_'.$type.'_'.$entity->type, 0);
+                  if($is_fieldable){
+                    $target_field = variable_get('pdfconverter_img_field_'.$field_name.'_'.$type.'_'.$entity->type, '');
+                    //dpm($entity);
+                    //return;
+                    $entity->$target_field[LANGUAGE_NONE] = array();
+                    $i = 0;
+                    foreach($files_sources as $source){
+                      $file = new stdClass();
+                      $file->uid      = $user->uid;
+                      $file->status   = FILE_STATUS_PERMANENT;
+                      $file->filename = trim(basename($source), '.');
+                      $file->uri      = 'temporary://'.$file->filename;
+                      $file->filemime = file_get_mimetype($file->filename);
+                      //to solve Integrity Constraint Violation issue if there is for any case another entry with the same filename
+                      db_delete('file_managed')->condition('filename', $file->filename)->execute();
+                      file_save($file);
+                      //TODO: get the URI given by the field settings
+                      file_move($file, 'public://catalogos_pdf/images/'.$file->filename, FILE_EXISTS_RENAME);
+                      $file->alt = '';
+                      $file->title = '';
+                      //dpm($entity->$target_field[LANGUAGE_NONE][]);
+                      //dpm($file);
+                      //return;
+                      $entity->{$target_field}[LANGUAGE_NONE][$i] = (array) $file;
+                      field_attach_presave($type, $entity);
+                      field_attach_update($type, $entity);
+                      //dpm($file);
+                      $i++;
+                    }
+                  }
+                  //variable_set('pdfconverter_processed_'.$field_name.'_'.$type.'_'.$entity->type, TRUE);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  //dpm($entity);
+  //dpm($type);
+}
+
+/**
+ * The core function that converts an image file into a pdf
+ * @param file object to be converted
+ */
+function convert_file_to_images($pdf_file, $options = array()){
+  $options += array(
+    'type' => 'jpg',
+    'quality' => 90,
+    'density' => 72
+  );
+  $base_path = $_SERVER['DOCUMENT_ROOT'] . base_path();
+  $wrapper = file_stream_wrapper_get_instance_by_uri($pdf_file->uri);
+  $path = $wrapper->realpath();
+  $image_wrapper = file_stream_wrapper_get_instance_by_uri('temporary://'.str_replace('pdf', $options['type'], $pdf_file->filename));
+  $image_path = $image_wrapper->realpath();
+  //dpm($image_path);
+  $exec_command ='convert -limit memory 16 -limit map 32 -quality '.$options['quality'].' -density '.$options['density'].' -verbose '.$path.' '.$image_path;
+  drupal_set_message($exec_command);
+  $result = exec($exec_command);
+  drupal_set_message( 'Result: '.$result);
+  if(strpos($result, 'error') !== FALSE){
+    drupla_set_message('Error detected!', 'error');
+    watchdog( 
+      'pdfconverter', 
+      'Error detected while converting to pdf: !result', 
+      array('!result' => $result ),
+      WATCHDOG_ERROR );
+    return array();
+  }
+  $number = substr($result, strpos($result, '[') + 1, strpos($result, ']') - strpos($result, '[') - 1);
+  $files = array();
+  if($number > 0){
+    for($i = 0; $i<=$number; $i++){
+      $source = str_replace('.','-'.$i.'.', $image_path);
+      $files[] = $source;
+    }
+  }else{
+    $files[] = $image_path;
+  }
+  return $files;
+  drupal_set_message( 'PDF File has been successfully converted to images');
+}
+
+/**
+ * Form to upload a pdf and convert it into images
+ */
+function _pdfconverter_convert_form($form, &$form_state){
+  $form['pdf_file'] = array(
+    '#title' => 'Archivo PDF a convertir',
+    '#type' => 'managed_file',
+    '#default_value' => isset($form_state['values']['pdf_file'])?$form_state['values']['pdf_file']:0,
+    '#upload_location' => 'public://'
+  );
+  $form['convert'] = array(
+    '#type' => 'submit',
+	'#value' => 'Convertir'
+  );
+  return $form;
+}
+
+/**
+ * Submit handler for the pdf submit function
+ */
+function _pdfconverter_convert_form_submit($form, &$form_state){
+  if(!is_null($form_state['values']['pdf_file'])){    
+    if($form_state['values']['pdf_file'] != 0){
+      $pdf_file = file_load($form_state['values']['pdf_file']);
+      $pdf_file->status = FILE_STATUS_PERMANENT;
+      file_save($pdf_file);
+      file_usage_add($pdf_file, 'pdfconverter', 'pdf', $pdf_file->fid);
+      $base_path = $_SERVER['DOCUMENT_ROOT'] . base_path();
+      $wrapper = file_stream_wrapper_get_instance_by_uri($pdf_file->uri);
+      $path = $wrapper->realpath();
+      $image_path = str_replace('pdf', 'jpg', $path);
+      $result = exec('convert -quality 92 -density 150 -verbose '.$path.' '.$image_path);
+      drupal_set_message( 'Result: '.$result);
+      $number = substr($result, strpos($result, '[') + 1, strpos($result, ']') - strpos($result, '[') - 1);
+      //drupal_set_message( 'Number of files: '.$number+1);
+      $base_image_url = str_replace('pdf','jpg',$wrapper->getExternalUrl());
+      $files = 'Files :';
+      for($i = 0; $i<$number; $i++){
+        $image_url = str_replace('.','-'.$i, $base_image_url);
+        $files .= '<br />'.l($image_url, $image_url);
+      }
+      drupal_set_message( $files );
+      drupal_set_message( 'File has been successfully converted');
+    }
+  }
+}

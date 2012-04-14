@@ -1,0 +1,8 @@
+name = PDF to JPG converter
+description = Helper module to transform PDF to JPG files.
+core = 7.x
+dependencies[] = field
+dependencies[] = services
+dependencies[] = rest_server
+
+scripts[] = pdfconverter.js

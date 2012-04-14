@@ -1,0 +1,90 @@
+<?php
+/**
+ * Implementat hook_schema()
+ */
+function pdftoimg_schema(){
+  $schema = array();
+/*  $schema['pdftoimg_instances'] = array(
+    'description' => 'The base table for nodes.', 
+    'fields' => array(
+      'instance_id' => array(
+        'description' => 'Identifier of the field instance', 
+        'type' => 'varchar',
+        'size' => 128,  
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+      'options' => array(
+        'description' => 'Options', 
+        'type' => 'varchar',
+        'size' => 256,  
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('pdf_fid'),
+  ); 
+  $schema['pdftoimg_index'] = array(
+    'description' => 'The base table for nodes.', 
+    'fields' => array(
+      'pdf_fid' => array(
+        'description' => 'The primary identifier of the PDF file', 
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+      'processed' => array(
+        'description' => 'Indicator that the PDF has been converted to images', 
+        'type' => 'int',
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('pdf_fid'),
+  );
+  $schema['pdftoimg'] = array(
+    'description' => 'The base table for nodes.', 
+    'fields' => array(
+      'pdf_fid' => array(
+        'description' => 'The primary identifier of the PDF file', 
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+      'page_fid' => array(
+        'description' => 'Page Image file ID', 
+        'type' => 'int',
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+      'page_number' => array(
+        'description' => 'Page Number', 
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ), 
+    'primary key' => array('pdf_fid', 'page_fid'),
+  );*/
+  return $schema;
+}
+
+/**
+ * Implements hook_install()
+ */
+function pdftoimg_install(){
+  
+  
+}
+
+/**
+ * Implements hook_uninstall()
+ */
+function pdftoimg_uninstall(){
+  
+}
